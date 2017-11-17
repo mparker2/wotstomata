@@ -1,3 +1,9 @@
 train/*
 val/*
 __pycache__
+*.png
+train_nn.o*
+*.o*
+*.pk
+*.h5
+*.json

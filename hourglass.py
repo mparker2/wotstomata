@@ -32,17 +32,27 @@ def residual_block(y, num_channels, name):
     return y
 
 
-def output_convs(y, num_conv_channels, name):
-    name = 'output_{}'.format(name)
+def conv_outputs(y, num_conv_channels, name):
+    name = 'hm_{}'.format(name)
     y = layers.Conv2D(num_conv_channels,
                       kernel_size=1,
                       padding='same',
                       name=name + '_conv_1')(y)
     y = layers.BatchNormalization(name=name + '_batch_norm')(y)
     y = layers.Activation('relu', name=name + '_activation')(y)
-    y = layers.Conv2D(1, kernel_size=1,
-                      padding='same',
-                      name=name)(y)
+    y = layers.Conv2D(1, kernel_size=1, padding='same', name=name)(y)
+    return y, name
+
+
+def transpose_conv_outputs(y, num_conv_channels, name):
+    name = 'seg_{}'.format(name)
+    y = layers.Conv2DTranspose(num_conv_channels,
+                               kernel_size=3,
+                               padding='same',
+                               name=name+'_convtranspose')(y)
+    y = layers.BatchNormalization(name=name + '_batch_norm')(y)
+    y = layers.Activation('relu', name=name + '_activation')(y)
+    y = layers.Conv2D(1, kernel_size=1, padding='same', name=name)(y)
     return y, name
 
 
@@ -64,6 +74,8 @@ def hourglass_module(y, num_channels,
     i += 1
     for conv in convs[::-1]:
         res_block_name = '{}_res_block_{}'.format(module_name, i)
+        conv = residual_block(conv, num_channels,
+                              res_block_name + '_hg_shortcut')
         prev = residual_block(prev, num_channels, res_block_name)
         prev = layers.UpSampling2D(2, name=res_block_name + '_upsampled')(prev)
         prev = layers.Add(name=res_block_name + '_add')([conv, prev])
@@ -75,7 +87,8 @@ def hourglass_module(y, num_channels,
 def build_hourglass(num_hg_modules=4,
                     num_conv_channels=16,
                     min_shape=4,
-                    hg_dropout=0.4):
+                    transpose_output=False,
+                    learning_rate=2.5e-4):
     input_layer = layers.Input(shape=(256, 256, 3))
     outputs = []
     output_names = []
@@ -90,17 +103,35 @@ def build_hourglass(num_hg_modules=4,
         module_name = 'hg_{}'.format(i)
         prev = hourglass_module(prev, num_conv_channels,
                                 module_name, min_shape)
-        
+
         # create intermediate output from hourglass
-        output, o_name = output_convs(prev, num_conv_channels, i + 1)
-        outputs.append(output)
-        output_names.append(o_name)
+        hm_output, hm_o_name = conv_outputs(prev,
+                                            num_conv_channels,
+                                            i + 1)
+        outputs.append(hm_output)
+        output_names.append(hm_o_name)
+
+        if transpose_output:
+            seg_output, seg_o_name = transpose_conv_outputs(prev,
+                                                            num_conv_channels,
+                                                            i + 1)
+            outputs.append(seg_output)
+            output_names.append(seg_o_name)
 
     loss_weights = np.cumsum(np.ones(num_hg_modules))
+    if transpose_output:
+        loss_weights = np.repeat(loss_weights, 2)
     loss_weights /= loss_weights.sum()
     loss_weights = {layer: w for layer, w in zip(output_names, loss_weights)}
     hourglass = models.Model(inputs=input_layer, outputs=outputs)
-    hourglass.compile(optimizer=optimizers.RMSprop(lr=2.5e-4),
+    hourglass.compile(optimizer=optimizers.RMSprop(lr=learning_rate),
                       loss=losses.mean_squared_error,
                       loss_weights=loss_weights)
     return hourglass
+
+
+def load_model(model_json_fn, model_weights_fn):
+    with open(model_json_fn) as j:
+        model = models.model_from_json(j.read())
+    model.load_weights(model_weights_fn)
+    return model

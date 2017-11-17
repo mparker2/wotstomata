@@ -15,7 +15,7 @@ MINIBATCH_SIZE = 32
 FRAC_RANDOMLY_SAMPLED_IMGS = 0.4
 STEPS_PER_EPOCH = 128
 VALIDATION_STEPS = 12
-NUM_EPOCHS = 250
+NUM_EPOCHS = 100
 
 
 if __name__ == '__main__':
@@ -24,6 +24,7 @@ if __name__ == '__main__':
         '/fastdata/mbp14mtp/stomatal_prediction/train',
         batch_size=MINIBATCH_SIZE,
         num_hg_modules=NUM_HG_MODULES,
+        segment=True,
         frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS,
         y_resize_shape=(64, 64, 1))
 
@@ -31,12 +32,14 @@ if __name__ == '__main__':
         '/fastdata/mbp14mtp/stomatal_prediction/val',
         batch_size=MINIBATCH_SIZE,
         num_hg_modules=NUM_HG_MODULES,
+        segment=True,
         frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS,
         y_resize_shape=(64, 64, 1))
 
     hg = build_hourglass(num_hg_modules=NUM_HG_MODULES,
                          num_conv_channels=NUM_CONV_CHANNELS,
                          min_shape=MIN_SHAPE,
+                         transpose_output=True,
                          learning_rate=LEARNING_RATE)
 
     reduce_lr = ReduceLROnPlateau(monitor='val_loss',
@@ -47,9 +50,10 @@ if __name__ == '__main__':
                                   epsilon=0.0001)
 
     plot_val_data, _ = next(val_gen)
-    plot_losses = PlotLosses("./training_loss.png",
+    plot_losses = PlotLosses("./segmentation_loss.png",
                              plot_val_data,
-                             STEPS_PER_EPOCH)
+                             STEPS_PER_EPOCH,
+                             layer=1)
 
     history = hg.fit_generator(
         generator=train_gen,
@@ -62,8 +66,8 @@ if __name__ == '__main__':
     )
 
     model_json = hg.to_json()
-    with open("model_architecture.json", "w") as j:
+    with open("segmentation_model_architecture.json", "w") as j:
         j.write(model_json)
-    hg.save_weights("model_weights.h5")
-    with open("model_history.pk", "wb") as h:
+    hg.save_weights("segmentation_model_weights.h5")
+    with open("segmentation_model_history.pk", "wb") as h:
         pk.dump(history.history, h)
