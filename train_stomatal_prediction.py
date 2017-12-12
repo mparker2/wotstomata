@@ -24,15 +24,15 @@ if __name__ == '__main__':
         '/fastdata/mbp14mtp/stomatal_prediction/train',
         batch_size=MINIBATCH_SIZE,
         num_hg_modules=NUM_HG_MODULES,
-        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS,
-        y_resize_shape=(64, 64, 1))
+        segment=False,
+        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS)
 
     val_gen = generate_training_data(
         '/fastdata/mbp14mtp/stomatal_prediction/val',
         batch_size=MINIBATCH_SIZE,
         num_hg_modules=NUM_HG_MODULES,
-        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS,
-        y_resize_shape=(64, 64, 1))
+        segment=False,
+        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS)
 
     hg = build_hourglass(num_hg_modules=NUM_HG_MODULES,
                          num_conv_channels=NUM_CONV_CHANNELS,

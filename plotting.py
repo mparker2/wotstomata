@@ -55,7 +55,10 @@ class PlotLosses(Callback):
 
         self.img_ax.clear()
         self.img_ax.imshow(self.val_data[i], extent=[0, 1, 0, 1], cmap='gray')
-        self.img_ax.imshow(pred, extent=[0, 1, 0, 1], cmap='viridis', alpha=0.3)
+        self.img_ax.imshow(pred,
+                           extent=[0, 1, 0, 1],
+                           cmap='viridis',
+                           alpha=0.3)
         self.img_ax.set_axis_off()
         plt.savefig(self.file_name)
 

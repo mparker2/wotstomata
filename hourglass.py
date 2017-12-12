@@ -1,6 +1,6 @@
+from math import log as logn
 import numpy as np
 
-import keras
 from keras import models, layers, optimizers, losses
 
 
@@ -28,44 +28,55 @@ def residual_block(y, num_channels, name):
 
     y = layers.add([shortcut, y], name=name + '_add_shortcut')
     y = layers.Activation('relu', name=name + '_final_relu')(y)
-
     return y
 
 
-def conv_outputs(y, num_conv_channels, name):
-    name = 'hm_{}'.format(name)
-    y = layers.Conv2D(num_conv_channels,
-                      kernel_size=1,
-                      padding='same',
-                      name=name + '_conv_1')(y)
-    y = layers.BatchNormalization(name=name + '_batch_norm')(y)
-    y = layers.Activation('relu', name=name + '_activation')(y)
-    y = layers.Conv2D(1, kernel_size=1, padding='same', name=name)(y)
-    return y, name
+def get_n_resamplings(input_shape, output_shape, upsample_size):
+    n = []
+    for i, o in zip(input_shape, output_shape):
+        n.append(abs(logn(o / i, upsample_size)))
+    assert all([x == n[0] for x in n])
+    assert n[0] == int(n[0])
+    return int(n[0])
 
 
-def transpose_conv_outputs(y, num_conv_channels, name):
-    name = 'seg_{}'.format(name)
-    y = layers.Conv2DTranspose(num_conv_channels,
-                               kernel_size=3,
-                               padding='same',
-                               name=name+'_convtranspose')(y)
-    y = layers.BatchNormalization(name=name + '_batch_norm')(y)
-    y = layers.Activation('relu', name=name + '_activation')(y)
-    y = layers.Conv2D(1, kernel_size=1, padding='same', name=name)(y)
-    return y, name
+def conv_outputs(y, input_shape, output_shape,
+                 upsample_size, channel_downsample_size,
+                 name, conv_layer_type='conv'):
+    if conv_layer_type == 'conv':
+        Conv = layers.Conv2D
+    elif conv_layer_type == 'convtranspose':
+        Conv = layers.Conv2DTranspose
+    else:
+        raise TypeError(
+            'conv_layer_type {} not recognised'.format(conv_layer_type))
+
+    n_layers = get_n_resamplings(input_shape, output_shape, upsample_size)
+    n_channels = channel_downsample_size ** n_layers
+    for i in range(0, n_layers):
+        y = Conv(n_channels, kernel_size=3, padding='same',
+                 name=name + '_{}_{}'.format(conv_layer_type, i))(y)
+        y = layers.BatchNormalization(
+            name=name + '_batch_norm_{}'.format(i))(y)
+        y = layers.Activation('relu',
+                              name=name + '_activation_{}'.format(i))(y)
+        y = layers.UpSampling2D(upsample_size,
+                                name=name + '_upsampling_{}'.format(i))(y)
+        n_channels //= channel_downsample_size
+    assert n_channels == 1
+    y = Conv(n_channels, kernel_size=1, padding='same', name=name)(y)
+    return y
 
 
-def hourglass_module(y, num_channels,
-                     module_name, min_shape=4):
+def hourglass_module(y, num_channels, module_name, min_shape=(4, 4)):
     prev = y
     convs = []
     i = 1
     while True:
         res_block_name = '{}_res_block_{}'.format(module_name, i)
         prev = residual_block(prev, num_channels, res_block_name)
-        _, *curr_shape, _ = keras.backend.int_shape(prev)
-        if curr_shape[0] == min_shape or curr_shape[1] == min_shape:
+        curr_shape = tuple(prev.shape.as_list()[1:-1])
+        if curr_shape == min_shape:
             break
         convs.append(prev)
         prev = layers.MaxPool2D(2, name=res_block_name + '_max_pool')(prev)
@@ -86,15 +97,27 @@ def hourglass_module(y, num_channels,
 
 def build_hourglass(num_hg_modules=4,
                     num_conv_channels=16,
-                    min_shape=4,
+                    input_shape=(256, 256),
+                    color_mode='rgb',
+                    max_hg_shape=(64, 64),
+                    min_hg_shape=(4, 4),
+                    output_shape=(64, 64),
                     transpose_output=False,
+                    transpose_output_shape=(128, 128),
                     learning_rate=2.5e-4):
-    input_layer = layers.Input(shape=(256, 256, 3))
+    if color_mode == 'rgb':
+        input_channels = 3
+    elif color_mode == 'grayscale':
+        input_channels == 1
+    else:
+        raise TypeError('color_mode {} not recognised'.format(input_channels))
+    input_layer = layers.Input(shape=input_shape + (input_channels,))
     outputs = []
     output_names = []
     prev = input_layer
-    # initial residual blocks to reduce img size from 256 to 64
-    for i in range(2):
+    # initial residual blocks to reduce size from input_shape to max_hg_shape
+    n_initial_layers = get_n_resamplings(input_shape, max_hg_shape, 2)
+    for i in range(n_initial_layers):
         res_block_name = 'init_res_block_{}'.format(i + 1)
         prev = residual_block(prev, num_conv_channels, res_block_name)
         prev = layers.MaxPool2D(2, name=res_block_name + '_max_pool')(prev)
@@ -102,19 +125,31 @@ def build_hourglass(num_hg_modules=4,
     for i in range(num_hg_modules):
         module_name = 'hg_{}'.format(i)
         prev = hourglass_module(prev, num_conv_channels,
-                                module_name, min_shape)
+                                module_name, min_hg_shape)
 
         # create intermediate output from hourglass
-        hm_output, hm_o_name = conv_outputs(prev,
-                                            num_conv_channels,
-                                            i + 1)
+        hm_o_name = 'hm_{}'.format(i + 1)
+        hm_output = conv_outputs(
+            y=prev,
+            input_shape=max_hg_shape,
+            output_shape=output_shape,
+            upsample_size=2,
+            channel_downsample_size=4,
+            name=hm_o_name,
+            conv_layer_type='conv')
         outputs.append(hm_output)
         output_names.append(hm_o_name)
 
         if transpose_output:
-            seg_output, seg_o_name = transpose_conv_outputs(prev,
-                                                            num_conv_channels,
-                                                            i + 1)
+            seg_o_name = 'seg_{}'.format(i + 1)
+            seg_output = conv_outputs(
+                y=prev,
+                input_shape=max_hg_shape,
+                output_shape=transpose_output_shape,
+                upsample_size=2,
+                channel_downsample_size=4,
+                name=seg_o_name,
+                conv_layer_type='convtranspose')
             outputs.append(seg_output)
             output_names.append(seg_o_name)
 
@@ -124,9 +159,10 @@ def build_hourglass(num_hg_modules=4,
     loss_weights /= loss_weights.sum()
     loss_weights = {layer: w for layer, w in zip(output_names, loss_weights)}
     hourglass = models.Model(inputs=input_layer, outputs=outputs)
-    hourglass.compile(optimizer=optimizers.RMSprop(lr=learning_rate),
-                      loss=losses.mean_squared_error,
-                      loss_weights=loss_weights)
+    hourglass.compile(
+        optimizer=optimizers.RMSprop(lr=learning_rate),
+        loss=losses.mean_squared_error,
+        loss_weights=loss_weights)
     return hourglass
 
 

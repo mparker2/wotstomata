@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#$ -l mem=32G
-#$ -l rmem=32G
+#$ -l mem=42G
+#$ -l rmem=42G
 #$ -l gpu=1
 #$ -m bea
 #$ -M mparker2@sheffield.ac.uk

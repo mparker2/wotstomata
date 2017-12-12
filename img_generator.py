@@ -1,5 +1,4 @@
 import os
-import warnings
 import random
 from glob import glob
 
@@ -104,16 +103,6 @@ def read_multipage_tiff(path):
     return images
 
 
-def resize_y(y_batch, resize_shape):
-    resized_y_batch = []
-    for hm in y_batch:
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            resized_y_batch.append(resize(hm, resize_shape))
-    resized_y_batch = np.asarray(resized_y_batch)
-    return resized_y_batch
-
-
 def add_multipart_line(img, line_x, line_y):
     coords_iter = zip(line_y, line_x)
     r0, c0 = next(coords_iter)
@@ -168,7 +157,7 @@ def preprocess_img(img_fn, point_fn, roi_fn=None, sigma=20, trunc=3):
     if roi_fn is not None:
         segs = roi_zip_to_segment_image(roi_fn,
                                         img.shape[1:3],
-                                        dilation_size=3)
+                                        dilation_size=2)
         segs = filter_segments_by_z_position(segs, points, img.shape[0])
     else:
         segs = None
@@ -198,12 +187,7 @@ def iter_img_subsets(img, hm, points, segs=None, frac_random=0.5):
         yield img_slic, hm_slic, segs_slic
 
 
-def generate_training_data(directory,
-                           batch_size,
-                           num_hg_modules,
-                           segment=True,
-                           frac_randomly_sampled_imgs=0.5,
-                           y_resize_shape=(64, 64, 1)):
+def get_all_img_generators(directory, segment, frac_randomly_sampled_imgs):
     all_img_generators = []
     for img_fn in glob(directory + '/*.tif'):
         if os.path.exists(img_fn + '.csv'):
@@ -215,6 +199,66 @@ def generate_training_data(directory,
                 iter_img_subsets(
                     img, heatmap, points, segs,
                     frac_random=frac_randomly_sampled_imgs))
+    return all_img_generators
+
+
+def resize_y_batch(y_batch, shape):
+    y_batch = np.asarray(y_batch)
+    if y_batch.ndim == 4 and y_batch.shape[-1] == 1:
+        y_batch.shape = y_batch.shape[:-1]
+    y_batch_resized = np.asarray(
+        [resize(img, shape, preserve_range=True) for img in y_batch])
+    if y_batch_resized.ndim == 3:
+        y_batch_resized.shape = y_batch_resized.shape + (1, )
+    return y_batch_resized
+
+
+def loop_training_iterators(iterators,
+                            transformer,
+                            n_outputs,
+                            batch_size,
+                            heatmap_shape,
+                            segment,
+                            segment_shape):
+    while True:
+        X_batch = []
+        y_hm_batch = []
+        if segment:
+            y_segs_batch = []
+        for _ in range(batch_size):
+            gen = random.choice(iterators)
+            seed = np.random.randint(0, 10000)
+            X, y_hm, y_segs = next(gen)
+            y_hm.shape = y_hm.shape + (1, )
+            X = transformer.random_transform(X, seed=seed)
+            y_hm = transformer.random_transform(y_hm, seed=seed)
+            X_batch.append(X)
+            y_hm_batch.append(y_hm)
+            if segment:
+                y_segs.shape = y_segs.shape + (1, )
+                y_segs = transformer.random_transform(y_segs, seed=seed)
+                y_segs_batch.append(y_segs)
+        y_hm_batch = resize_y_batch(y_hm_batch, heatmap_shape)
+        if segment:
+            y_segs_batch = resize_y_batch(y_segs_batch, segment_shape)
+            y_batch = [y_hm_batch, y_segs_batch]
+        else:
+            y_batch = [y_hm_batch, ]
+        X_batch = np.asarray(X_batch)
+        yield (X_batch, y_batch * n_outputs)
+
+
+def generate_training_data(directory,
+                           batch_size,
+                           n_outputs,
+                           heatmap_shape=(64, 64),
+                           segment=True,
+                           segment_shape=(128, 128),
+                           frac_randomly_sampled_imgs=0.5):
+    all_img_generators = get_all_img_generators(
+        directory,
+        segment,
+        frac_randomly_sampled_imgs)
 
     image_transformer = ImageDataGenerator(
         rotation_range=180,
@@ -224,32 +268,13 @@ def generate_training_data(directory,
         shear_range=0.2,
         zoom_range=0.2,
         horizontal_flip=True,
-        vertical_flip=True
-        )
+        vertical_flip=True)
 
-    while True:
-        X_batch = []
-        y_hm_batch = []
-        if segment:
-            y_segs_batch = []
-        for _ in range(batch_size):
-            gen = random.choice(all_img_generators)
-            seed = np.random.randint(0, 10000)
-            X, y_hm, y_segs = next(gen)
-            y_hm.shape = y_hm.shape + (1, )
-            X = image_transformer.random_transform(X, seed=seed)
-            y_hm = image_transformer.random_transform(y_hm, seed=seed)
-            X_batch.append(X)
-            y_hm_batch.append(y_hm)
-            if segment:
-                y_segs.shape = y_segs.shape + (1, )
-                y_segs = image_transformer.random_transform(y_segs, seed=seed)
-                y_segs_batch.append(y_segs)
-        resized_y_hm_batch = resize_y(y_hm_batch, y_resize_shape)
-        if segment:
-            resized_y_segs_batch = resize_y(y_segs_batch, y_resize_shape)
-            y_batch = [resized_y_hm_batch, resized_y_segs_batch]
-        else:
-            y_batch = [resized_y_hm_batch]
-        X_batch = np.asarray(X_batch)
-        yield (X_batch, y_batch * num_hg_modules)
+    yield from loop_training_iterators(
+        all_img_generators,
+        image_transformer,
+        n_outputs,
+        batch_size,
+        heatmap_shape,
+        segment,
+        segment_shape)

@@ -15,7 +15,7 @@ MINIBATCH_SIZE = 32
 FRAC_RANDOMLY_SAMPLED_IMGS = 0.4
 STEPS_PER_EPOCH = 128
 VALIDATION_STEPS = 12
-NUM_EPOCHS = 100
+NUM_EPOCHS = 250
 
 
 if __name__ == '__main__':
@@ -25,16 +25,14 @@ if __name__ == '__main__':
         batch_size=MINIBATCH_SIZE,
         num_hg_modules=NUM_HG_MODULES,
         segment=True,
-        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS,
-        y_resize_shape=(64, 64, 1))
+        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS)
 
     val_gen = generate_training_data(
         '/fastdata/mbp14mtp/stomatal_prediction/val',
         batch_size=MINIBATCH_SIZE,
         num_hg_modules=NUM_HG_MODULES,
         segment=True,
-        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS,
-        y_resize_shape=(64, 64, 1))
+        frac_randomly_sampled_imgs=FRAC_RANDOMLY_SAMPLED_IMGS)
 
     hg = build_hourglass(num_hg_modules=NUM_HG_MODULES,
                          num_conv_channels=NUM_CONV_CHANNELS,
