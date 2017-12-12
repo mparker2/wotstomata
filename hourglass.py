@@ -4,20 +4,20 @@ import numpy as np
 from keras import models, layers, optimizers, losses
 
 
-def residual_block(y, num_channels, name):
-    shortcut = y
-    y = layers.Conv2D(num_channels,
-                      kernel_size=(3, 3),
-                      name=name + '_conv_1',
-                      padding='same')(y)
-    y = layers.BatchNormalization(name=name + '_batch_norm_1')(y)
-    y = layers.Activation('relu', name=name + '_relu')(y)
+def residual_block(prev, num_channels, name):
+    shortcut = prev
+    prev = layers.Conv2D(num_channels,
+                         kernel_size=(3, 3),
+                         name=name + '_conv_1',
+                         padding='same')(prev)
+    prev = layers.BatchNormalization(name=name + '_batch_norm_1')(prev)
+    prev = layers.Activation('relu', name=name + '_relu')(prev)
 
-    y = layers.Conv2D(num_channels,
-                      kernel_size=(3, 3),
-                      name=name + '_conv_2',
-                      padding='same')(y)
-    y = layers.BatchNormalization(name=name + '_batch_norm_2')(y)
+    prev = layers.Conv2D(num_channels,
+                         kernel_size=(3, 3),
+                         name=name + '_conv_2',
+                         padding='same')(prev)
+    prev = layers.BatchNormalization(name=name + '_batch_norm_2')(prev)
 
     shortcut = layers.Conv2D(num_channels,
                              kernel_size=(1, 1),
@@ -26,9 +26,9 @@ def residual_block(y, num_channels, name):
     shortcut = layers.BatchNormalization(
         name=name + '_shortcut_batch_norm')(shortcut)
 
-    y = layers.add([shortcut, y], name=name + '_add_shortcut')
-    y = layers.Activation('relu', name=name + '_final_relu')(y)
-    return y
+    prev = layers.add([shortcut, prev], name=name + '_add_shortcut')
+    prev = layers.Activation('relu', name=name + '_final_relu')(prev)
+    return prev
 
 
 def get_n_resamplings(input_shape, output_shape, upsample_size):
@@ -40,7 +40,7 @@ def get_n_resamplings(input_shape, output_shape, upsample_size):
     return int(n[0])
 
 
-def conv_outputs(y, input_shape, output_shape,
+def conv_outputs(prev, input_shape, output_shape,
                  upsample_size, channel_downsample_size,
                  name, conv_layer_type='conv'):
     if conv_layer_type == 'conv':
@@ -50,26 +50,24 @@ def conv_outputs(y, input_shape, output_shape,
     else:
         raise TypeError(
             'conv_layer_type {} not recognised'.format(conv_layer_type))
-
     n_layers = get_n_resamplings(input_shape, output_shape, upsample_size)
     n_channels = channel_downsample_size ** n_layers
     for i in range(0, n_layers):
-        y = Conv(n_channels, kernel_size=3, padding='same',
-                 name=name + '_{}_{}'.format(conv_layer_type, i))(y)
-        y = layers.BatchNormalization(
-            name=name + '_batch_norm_{}'.format(i))(y)
-        y = layers.Activation('relu',
-                              name=name + '_activation_{}'.format(i))(y)
-        y = layers.UpSampling2D(upsample_size,
-                                name=name + '_upsampling_{}'.format(i))(y)
+        prev = Conv(n_channels, kernel_size=3, padding='same',
+                    name=name + '_{}_{}'.format(conv_layer_type, i))(prev)
+        prev = layers.BatchNormalization(
+            name=name + '_batch_norm_{}'.format(i))(prev)
+        prev = layers.Activation('relu',
+                                 name=name + '_activation_{}'.format(i))(prev)
+        prev = layers.UpSampling2D(
+            upsample_size, name=name + '_upsampling_{}'.format(i))(prev)
         n_channels //= channel_downsample_size
     assert n_channels == 1
-    y = Conv(n_channels, kernel_size=1, padding='same', name=name)(y)
-    return y
+    prev = Conv(n_channels, kernel_size=1, padding='same', name=name)(prev)
+    return prev
 
 
-def hourglass_module(y, num_channels, module_name, min_shape=(4, 4)):
-    prev = y
+def hourglass_module(prev, num_channels, module_name, min_shape=(4, 4)):
     convs = []
     i = 1
     while True:
@@ -108,7 +106,7 @@ def build_hourglass(num_hg_modules=4,
     if color_mode == 'rgb':
         input_channels = 3
     elif color_mode == 'grayscale':
-        input_channels == 1
+        input_channels = 1
     else:
         raise TypeError('color_mode {} not recognised'.format(input_channels))
     input_layer = layers.Input(shape=input_shape + (input_channels,))
