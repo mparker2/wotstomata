@@ -38,36 +38,59 @@ def _predict_img(img_fn, model, step_size=128):
     assert zstack.shape[-1] == 3
     heatmap = []
     segments = []
-    for z in zstack:
-        imax, jmax, _ = z.shape
+    stomatal_density = []
+    all_cell_density = []
+    blur_levels = []
+    zmax, imax, jmax, _ = zstack.shape
+    for z in range(zmax):
         pos = []
         X = []
+        z_slic = slice(max(0, z - 1), min(z + 2, zmax))
         for i, j in it.product(range(0, imax, step_size),
                                range(0, jmax, step_size)):
-            slic = z[i: i + 256, j: j + 256, :]
-            if not slic.shape == (256, 256, 3):
-                padded = np.zeros((256, 256, 3))
-                padded[:slic.shape[0], :slic.shape[1], :] = slic
+            slic = zstack[z_slic, i: i + 256, j: j + 256, :]
+            if not slic.shape == (3, 256, 256, 3):
+                padded = np.zeros((3, 256, 256, 3))
+                padded[:slic.shape[0],
+                       :slic.shape[1],
+                       :slic.shape[2],
+                       ...] = slic
                 slic = padded
             X.append(slic)
             pos.append((i, j))
-        hm_preds, seg_preds = model.predict(np.asarray(X))[-2:]
-        z_hm = np.zeros(z.shape[:-1], dtype='f')
-        z_segs = np.zeros(z.shape[:-1], dtype='f')
-        tot_in_pos = np.zeros(z.shape[:-1], dtype='i')
-        for (i, j), h, s, in zip(pos, hm_preds, seg_preds):
-            h = resize(threshold_image(h).reshape(64, 64),
+        hm_preds, seg_preds, stomata, all_cells, blur = model.predict(
+            np.asarray(X))[-5:]
+        z_hm = np.zeros((imax, jmax), dtype='f')
+        z_segs = z_hm.copy()
+        z_density = z_hm.copy()
+        z_all_cells = z_hm.copy()
+        z_blur = z_hm.copy()
+        tot_in_pos = z_hm.copy()
+        for (i, j), h, s, st, a, b in zip(pos, hm_preds, seg_preds,
+                                          stomata.ravel(), all_cells.ravel(),
+                                          blur.ravel()):
+            h = resize(threshold_image(h).reshape(h.shape[:-1]),
                        (256, 256), preserve_range=True)
-            s = resize(threshold_image(s).reshape(64, 64),
-                       (256, 256), preserve_range=True)            
+            s = resize(threshold_image(s).reshape(s.shape[:-1]),
+                       (256, 256), preserve_range=True)
             z_hm[i: i + 256, j: j + 256] += h[:min(h.shape[0], imax - i),
                                               :min(h.shape[1], jmax - j)]
             z_segs[i: i + 256, j: j + 256] += s[:min(s.shape[0], imax - i),
                                                 :min(s.shape[1], jmax - j)]
+            z_density[i: i + 256, j: j + 256] += st
+            z_all_cells[i: i + 256, j: j + 256] += a
+            z_blur[i: i + 256, j: j + 256] += b
             tot_in_pos[i:i + 256, j: j + 256] += 1
         heatmap.append(z_hm / tot_in_pos)
         segments.append(z_segs / tot_in_pos)
-    return np.asarray(heatmap), np.asarray(segments)
+        stomatal_density.append(z_density / tot_in_pos)
+        all_cell_density.append(z_all_cells / tot_in_pos)
+        blur_levels.append(z_blur / tot_in_pos)
+    blur_levels = np.asarray(blur_levels)
+    return (np.asarray(heatmap), np.asarray(segments),
+            np.asarray(stomatal_density),
+            np.asarray(all_cell_density),
+            np.asarray(blur_levels))
 
 
 @click.command()
@@ -88,10 +111,14 @@ def predict_img(img, arch, weights, output, step_size):
         imgs = [img, ]
         outputs = [output, ]
     for img, output in zip(imgs, outputs):
-        heatmap, segments = _predict_img(img, model, step_size)
+        heatmap, segments, density, all_cells, blur = _predict_img(
+            img, model, step_size)
         h5_file = h5py.File(output, mode='w')
         h5_file.create_dataset('heatmap', data=heatmap)
         h5_file.create_dataset('segments', data=segments)
+        h5_file.create_dataset('stomatal_density', data=density)
+        h5_file.create_dataset('all_cell_density', data=all_cells)
+        h5_file.create_dataset('blur', data=blur)
         h5_file.close()
 
 if __name__ == '__main__':

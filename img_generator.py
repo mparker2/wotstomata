@@ -1,6 +1,8 @@
 import os
 import random
+import warnings
 from glob import glob
+from itertools import repeat
 
 from PIL import Image
 
@@ -10,8 +12,11 @@ import pandas as pd
 
 from skimage.transform import resize
 from skimage.filters import gaussian
-from skimage.morphology import disk
+from skimage.morphology import disk, remove_small_objects
+from skimage.measure import label
+from skimage.feature import peak_local_max
 from skimage.draw import line as draw_line, polygon as draw_polygon
+from skimage.segmentation import clear_border, relabel_sequential
 
 from shapely.geometry import Point
 from shapely.ops import cascaded_union
@@ -127,12 +132,14 @@ def filter_segments_by_z_position(segs, points, num_z_pos,
                                   buffer_size=100, gaus_sigma=50):
     masked_segs = np.tile(segs.reshape(1, *segs.shape),
                           (num_z_pos, 1, 1))
+    masked_region = []
     grouped = points.groupby('Slice')
     for z in range(num_z_pos):
         try:
             zp = grouped.get_group(z)
         except KeyError:
             masked_segs[z] = 0
+            masked_region.append(np.ones_like(segs))
             continue
         z_points = [Point(x, y) for _, x, y in zp[['X', 'Y']].itertuples()]
         in_focus_region = (cascaded_union(z_points).convex_hull
@@ -141,12 +148,14 @@ def filter_segments_by_z_position(segs, points, num_z_pos,
         c, r = zip(*in_focus_region.exterior.coords)
         r_idx, c_idx = draw_polygon(r, c, segs.shape)
         in_focus_mask[r_idx, c_idx] = 0
-        in_focus_mask = gaussian(in_focus_mask,
-                                 sigma=50,
-                                 preserve_range=True)
-        masked_segs[z] -= in_focus_mask
+        in_focus_mask_g = gaussian(in_focus_mask,
+                                   sigma=50,
+                                   preserve_range=True)
+        masked_segs[z] -= in_focus_mask_g
+        masked_region.append(in_focus_mask)
     masked_segs[masked_segs < 0] = 0
-    return np.asarray(masked_segs)
+    masked_region = 1 - np.asarray(masked_region)
+    return np.asarray(masked_segs), masked_region
 
 
 def preprocess_img(img_fn, point_fn, roi_fn=None, sigma=20, trunc=3):
@@ -158,13 +167,22 @@ def preprocess_img(img_fn, point_fn, roi_fn=None, sigma=20, trunc=3):
         segs = roi_zip_to_segment_image(roi_fn,
                                         img.shape[1:3],
                                         dilation_size=2)
-        segs = filter_segments_by_z_position(segs, points, img.shape[0])
+        segs, mask = filter_segments_by_z_position(segs, points, img.shape[0])
     else:
         segs = None
-    return img, hmap, points, segs
+        mask = None
+    return img, hmap, points, segs, mask
 
 
-def iter_img_subsets(img, hm, points, segs=None, frac_random=0.5):
+def pad_3d_img(img, pad_left=True):
+    padding = np.zeros((1, 256, 256, 3))
+    to_concat = [padding, img] if pad_left else [img, padding]
+    padded = np.concatenate(to_concat, axis=0)
+    return padded
+
+
+def iter_img_subsets(img, hm, points, segs=None, mask=None,
+                     frac_random=0.5, input_3d=False):
     determined = get_indices(points)
     while True:
         if np.random.random() > frac_random:
@@ -181,24 +199,41 @@ def iter_img_subsets(img, hm, points, segs=None, frac_random=0.5):
             j = np.random.randint(128, img.shape[2] - 128)
         i_slic = slice(i - 128, i + 128)
         j_slic = slice(j - 128, j + 128)
-        img_slic = img[z, i_slic, j_slic, :]
-        hm_slic = hm[z, i_slic, j_slic]
-        segs_slic = segs[z, i_slic, j_slic] if segs is not None else None
-        yield img_slic, hm_slic, segs_slic
+
+        z_slic = z if not input_3d else slice(
+            max(0, z - 1),
+            min(z + 2, img.shape[0])
+        )
+        img_slic = img[z_slic, i_slic, j_slic]
+        hm_slic = hm[z_slic, i_slic, j_slic]
+        segs_slic = segs[z_slic, i_slic, j_slic] if segs is not None else None
+        mask_slic = mask[z_slic, i_slic, j_slic] if mask is not None else None
+        if input_3d:
+            if img_slic.shape[0] < 3:
+                img_slic = pad_3d_img(img_slic, pad_left=not z)
+            hm_slic = hm_slic.max(0)
+            segs_slic = segs_slic.max(0)
+            mask_slic = mask_slic.max(0)
+        img_slic = img_slic.astype(np.ubyte)
+        yield img_slic, hm_slic, segs_slic, mask_slic
 
 
-def get_all_img_generators(directory, segment, frac_randomly_sampled_imgs):
+def get_all_img_generators(directory,
+                           segment,
+                           frac_randomly_sampled_imgs,
+                           input_3d):
     all_img_generators = []
     for img_fn in glob(directory + '/*.tif'):
         if os.path.exists(img_fn + '.csv'):
             if segment and not os.path.exists(img_fn + '.roi.zip'):
                 continue
-            img, heatmap, points, segs = preprocess_img(
+            img, heatmap, points, segs, mask = preprocess_img(
                 img_fn, img_fn + '.csv', img_fn + '.roi.zip')
             all_img_generators.append(
                 iter_img_subsets(
-                    img, heatmap, points, segs,
-                    frac_random=frac_randomly_sampled_imgs))
+                    img, heatmap, points, segs, mask,
+                    frac_random=frac_randomly_sampled_imgs,
+                    input_3d=input_3d))
     return all_img_generators
 
 
@@ -206,8 +241,10 @@ def resize_y_batch(y_batch, shape):
     y_batch = np.asarray(y_batch)
     if y_batch.ndim == 4 and y_batch.shape[-1] == 1:
         y_batch.shape = y_batch.shape[:-1]
-    y_batch_resized = np.asarray(
-        [resize(img, shape, preserve_range=True) for img in y_batch])
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        y_batch_resized = np.asarray(
+            [resize(img, shape, preserve_range=True) for img in y_batch])
     if y_batch_resized.ndim == 3:
         y_batch_resized.shape = y_batch_resized.shape + (1, )
     return y_batch_resized
@@ -215,50 +252,59 @@ def resize_y_batch(y_batch, shape):
 
 def loop_training_iterators(iterators,
                             transformer,
-                            n_outputs,
                             batch_size,
-                            heatmap_shape,
-                            segment,
-                            segment_shape):
+                            segment):
     while True:
         X_batch = []
         y_hm_batch = []
         if segment:
             y_segs_batch = []
+            y_mask_batch = []
+        else:
+            y_segs_batch = None
+            y_mask_batch = None
         for _ in range(batch_size):
             gen = random.choice(iterators)
             seed = np.random.randint(0, 10000)
-            X, y_hm, y_segs = next(gen)
+            X, y_hm, y_segs, y_mask = next(gen)
             y_hm.shape = y_hm.shape + (1, )
-            X = transformer.random_transform(X, seed=seed)
-            y_hm = transformer.random_transform(y_hm, seed=seed)
+            X = transformer(X, seed=seed)
+            y_hm = transformer(y_hm, seed=seed)
             X_batch.append(X)
             y_hm_batch.append(y_hm)
             if segment:
                 y_segs.shape = y_segs.shape + (1, )
-                y_segs = transformer.random_transform(y_segs, seed=seed)
+                y_segs = transformer(y_segs, seed=seed)
+                y_mask.shape = y_mask.shape + (1, )
+                y_mask = transformer(y_mask, seed=seed)
                 y_segs_batch.append(y_segs)
-        y_hm_batch = resize_y_batch(y_hm_batch, heatmap_shape)
-        if segment:
-            y_segs_batch = resize_y_batch(y_segs_batch, segment_shape)
-            y_batch = [y_hm_batch, y_segs_batch]
-        else:
-            y_batch = [y_hm_batch, ]
+                y_mask_batch.append(y_mask)
         X_batch = np.asarray(X_batch)
-        yield (X_batch, y_batch * n_outputs)
+        yield X_batch, y_hm_batch, y_segs_batch, y_mask_batch
+
+
+def transform_3d(transformer):
+    def _transform_3d(zstack, seed):
+        if zstack.ndim == 4:
+            transformed = []
+            for z in zstack:
+                transformed.append(transformer(z, seed))
+            return np.asarray(transformed)
+        else:
+            return transformer(zstack, seed)
+    return _transform_3d
 
 
 def generate_training_data(directory,
                            batch_size,
-                           n_outputs,
-                           heatmap_shape=(64, 64),
                            segment=True,
-                           segment_shape=(128, 128),
-                           frac_randomly_sampled_imgs=0.5):
+                           frac_randomly_sampled_imgs=0.5,
+                           input_3d=True):
     all_img_generators = get_all_img_generators(
         directory,
         segment,
-        frac_randomly_sampled_imgs)
+        frac_randomly_sampled_imgs,
+        input_3d)
 
     image_transformer = ImageDataGenerator(
         rotation_range=180,
@@ -270,11 +316,85 @@ def generate_training_data(directory,
         horizontal_flip=True,
         vertical_flip=True)
 
+    if not input_3d:
+        transformer = image_transformer.random_transform
+    else:
+        transformer = transform_3d(image_transformer.random_transform)
+
     yield from loop_training_iterators(
         all_img_generators,
-        image_transformer,
-        n_outputs,
+        transformer,
         batch_size,
-        heatmap_shape,
-        segment,
-        segment_shape)
+        segment)
+
+
+def batch_formatting_wrapper(generator,
+                             n_outputs,
+                             heatmap_shape=(64, 64),
+                             segment=True,
+                             segment_shape=(128, 128)):
+    for X_batch, y_hm_batch, y_segs_batch, _ in generator:
+        y_hm_batch = resize_y_batch(y_hm_batch, heatmap_shape)
+        if segment:
+            y_segs_batch = resize_y_batch(y_segs_batch, segment_shape)
+            y_batch = [y_hm_batch, y_segs_batch] * n_outputs
+        else:
+            y_batch = [y_hm_batch, ] * n_outputs
+        yield X_batch, y_batch
+
+
+def count_segments(segs, mask):
+    segs = 1 - segs
+    segs[mask] = 0
+    labelled = label(segs, connectivity=2)
+    small_mask = remove_small_objects(
+        labelled, 100, connectivity=2).astype(bool)
+    border_mask = clear_border(segs, buffer_size=1).astype(bool)
+    labelled[~small_mask & ~border_mask] = 0
+    labelled, *_ = relabel_sequential(labelled)
+    return labelled.max()
+
+
+def count_heatmap_peaks(hmap, mask, threshold=0.8):
+    hmap = gaussian(hmap, sigma=5, preserve_range=True)
+    hmap[mask] = 0
+    peaks = peak_local_max(hmap,
+                           exclude_border=False,
+                           min_distance=5,
+                           threshold_abs=threshold)
+    return len(peaks)
+
+
+def cell_counting_wrapper(generator):
+    for X_batch, y_hm_batch, y_segs_batch, y_mask_batch in generator:
+        hm_count_batch = []
+        if y_segs_batch is None:
+            y_segs_batch = repeat(None)
+            y_mask_batch = repeat(None)
+        else:
+            seg_count_batch = []
+            in_focus_batch = []
+        for img, hm, segs, in_focus_mask in zip(X_batch, y_hm_batch,
+                                                y_segs_batch, y_mask_batch):
+            if img.ndim == 4:
+                transformed_fill_mask = ~img[1].any(axis=2)
+            else:
+                transformed_fill_mask = ~img.any(axis=2)
+            hm_count_batch.append(
+                count_heatmap_peaks(hm.reshape(hm.shape[:-1]),
+                                    transformed_fill_mask))
+            if segs is not None:
+                seg_count_batch.append(
+                    count_segments(segs.reshape(segs.shape[:-1]),
+                                   transformed_fill_mask))
+                in_focus_batch.append(
+                    in_focus_mask[~transformed_fill_mask].sum() /
+                    in_focus_mask[~transformed_fill_mask].size
+                )
+        if y_segs_batch is not None:
+            y_batch = [np.asarray(hm_count_batch),
+                       np.asarray(seg_count_batch),
+                       np.asarray(in_focus_batch)]
+        else:
+            y_batch = [np.asarray(hm_count_batch)]
+        yield X_batch, y_batch
