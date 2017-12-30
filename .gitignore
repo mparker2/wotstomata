@@ -1,5 +1,4 @@
-train/*
-val/*
+data/*
 __pycache__
 *.png
 *.o*
