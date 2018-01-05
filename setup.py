@@ -8,7 +8,7 @@ setup(
     ),
     author='Matthew Parker',
     scripts=[
-        'funniest/scripts/train_stomatal_prediction'
+        'wotstomata/scripts/train_stomatal_prediction'
     ],
     entry_points={
         'console_scripts': [
