@@ -1,18 +1,18 @@
-model_architecture:
+model_architechture:
     num_hg_modules: 4
     num_conv_channels: 16
-    input_shape: (3, 256, 256)
-    max_hg_shape: (64, 64)
-    min_hg_shape: (4, 4)
+    input_shape: !!python/tuple [3, 256, 256]
+    max_hg_shape: !!python/tuple [64, 64]
+    min_hg_shape: !!python/tuple [4, 4]
     resampling_size: 2
     output_channel_downsampling_size: 4
     generate_segmented_cells: true
-    heatmap_output_shape: (64, 64)
-    segment_output_shape: (128, 128)
+    heatmap_output_shape: !!python/tuple [64, 64]
+    segment_output_shape: !!python/tuple [128, 128]
 
 cell_counting_transfer:
-    generate_feature_counts: true
-    load_model_for_transfer: true
+    generate_feature_counts: false
+    load_model_for_transfer: false
 
 model_training:
     learning_rate: 2.5e-4
@@ -35,7 +35,7 @@ outputs:
     checkpoint_fn: "./data/models/model_checkpoint_weights.h5"
     weights_fn: "./data/models/model_final_weights.h5"
     history_fn: "./data/models/model_history.pk"
-    transfer_checkpoint_fn: 'count_model_checkpoint_weights.h5'
-    transfer_history_fn: "count_model_history.pk"
-    combined_architecture_fn: 'segmentation_count_model_architecture.json'
-    combined_weights_fn: 'segmentation_count_model_final_weights.h5'
+    transfer_checkpoint_fn: './data/models/count_model_checkpoint_weights.h5'
+    transfer_history_fn: "./data/models/count_model_history.pk"
+    combined_architecture_fn: './data/models/segmentation_count_model_architecture.json'
+    combined_weights_fn: './data/models/segmentation_count_model_final_weights.h5'

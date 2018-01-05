@@ -3,10 +3,9 @@ import os
 import shutil
 import pickle as pk
 import yaml
-
 import click
 
-if sys.argv[1] == 'train':
+if sys.argv[1] == 'run':
     from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 
     from wotstomata.train.hourglass import (
@@ -44,8 +43,9 @@ def config(new_config_fn):
 
 @main.command()
 @click.argument('config-fn', required=False, default='./train.yaml')
-def train(config_fn):
-    config = yaml.load(config_fn)
+def run(config_fn):
+    with open(config_fn) as c:
+        config = yaml.load(c)
     arch_params = config['model_architechture']
     training_params = config['model_training']
     training_data = config['training_data']

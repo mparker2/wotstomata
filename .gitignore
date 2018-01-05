@@ -1,4 +1,5 @@
-data/*
+/data/*
+/*.yaml
 __pycache__
 *.egg-info
 *.png
