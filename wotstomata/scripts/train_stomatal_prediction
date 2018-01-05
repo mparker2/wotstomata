@@ -42,4 +42,4 @@ echo "using GPU $CUDA_VISIBLE_DEVICES"
 export CUDA_VISIBLE_DEVICES
 export KERAS_BACKEND=tensorflow
 
-ws_train train "./train.yaml"
+ws_train run "./train.yaml"
