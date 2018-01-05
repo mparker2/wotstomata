@@ -7,6 +7,9 @@ setup(
         'stomatal prediction using stacked hourglass neural net'
     ),
     author='Matthew Parker',
+    scripts=[
+        'funniest/scripts/train_stomatal_prediction'
+    ],
     entry_points={
         'console_scripts': [
             'ws_train = wotstomata.scripts.train_hourglass:main',
