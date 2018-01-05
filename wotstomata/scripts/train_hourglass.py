@@ -43,7 +43,7 @@ def config(new_config_fn):
 
 
 @main.command()
-@click.argument('config-fn', required=True)
+@click.argument('config-fn', required=False, default='./train.yaml')
 def train(config_fn):
     config = yaml.load(config_fn)
     arch_params = config['model_architechture']
