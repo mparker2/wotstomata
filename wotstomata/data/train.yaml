@@ -1,0 +1,41 @@
+model_architecture:
+    num_hg_modules: 4
+    num_conv_channels: 16
+    input_shape: (3, 256, 256)
+    max_hg_shape: (64, 64)
+    min_hg_shape: (4, 4)
+    resampling_size: 2
+    output_channel_downsampling_size: 4
+    generate_segmented_cells: true
+    heatmap_output_shape: (64, 64)
+    segment_output_shape: (128, 128)
+
+cell_counting_transfer:
+    generate_feature_counts: true
+    load_model_for_transfer: true
+
+model_training:
+    learning_rate: 2.5e-4
+    minibatch_size: 32
+    steps_per_epoch: 128
+    validation_steps: 12
+    num_epochs: 75
+    num_transfer_epochs: 50
+    frac_randomly_sampled_imgs: 0.4
+    verbose: 1
+
+training_data:
+    training_data_dir: './data/imgs/train'
+    val_data_dir: './data/imgs/val'
+
+outputs:
+    plot_fn: "./data/models/loss.png"
+    architecture_fn: "./data/models/model_architecture.json"
+    summary_fn: "./data/models/model_summary.txt"
+    checkpoint_fn: "./data/models/model_checkpoint_weights.h5"
+    weights_fn: "./data/models/model_final_weights.h5"
+    history_fn: "./data/models/model_history.pk"
+    transfer_checkpoint_fn: 'count_model_checkpoint_weights.h5'
+    transfer_history_fn: "count_model_history.pk"
+    combined_architecture_fn: 'segmentation_count_model_architecture.json'
+    combined_weights_fn: 'segmentation_count_model_final_weights.h5'
