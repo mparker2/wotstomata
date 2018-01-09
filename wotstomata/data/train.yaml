@@ -1,3 +1,11 @@
+scheduler_parameters:
+    num_gpus: 4
+    cpu_memory: '32G'
+    email_on: 'bea'
+    email_address: 'mparker2@sheffield.ac.uk'
+    job_name: "train_hourglass"
+    conda_env: "sharc_ml2"
+
 model_architechture:
     num_hg_modules: 4
     num_conv_channels: 16
@@ -12,13 +20,11 @@ model_architechture:
 
 model_training:
     learning_rate: 2.5e-4
-    minibatch_size: 32
+    minibatch_size: 64
     steps_per_epoch: 128
     validation_steps: 12
     num_epochs: 75
     frac_randomly_sampled_imgs: 0.4
-    num_gpus: 2
-    cpu_memory: '32G'
     verbose: 1
 
 training_data:
