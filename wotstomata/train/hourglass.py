@@ -1,7 +1,10 @@
+import warnings
 from math import log as logn
 import numpy as np
 
-from keras import models, layers, optimizers, losses
+from keras import models, layers, optimizers, losses, utils
+import tensorflow as tf
+from tensorflow.python.client import device_lib
 
 
 def conv_batch(prev, num_channels, kernel_size, name, conv_type=None):
@@ -177,9 +180,9 @@ def build_hourglass(num_hg_modules=4,
                     resampling_size=2,
                     output_shape=(64, 64),
                     output_channel_downsampling_size=4,
-                    transpose_output=False,
+                    transpose_output=True,
                     transpose_output_shape=(128, 128),
-                    learning_rate=2.5e-4):
+                    blur_output=True):
     if color_mode == 'rgb':
         input_channels = 3
     elif color_mode == 'grayscale':
@@ -229,102 +232,76 @@ def build_hourglass(num_hg_modules=4,
             outputs.append(seg_output)
             output_names.append(seg_o_name)
 
-    loss_weights = np.cumsum(np.ones(num_hg_modules))
-    if transpose_output:
-        loss_weights = np.repeat(loss_weights, 2)
-    loss_weights /= loss_weights.sum()
-    loss_weights = {layer: w for layer, w in zip(output_names, loss_weights)}
-
-    hourglass = models.Model(inputs=input_layer, outputs=outputs)
-    hourglass.compile(
-        optimizer=optimizers.RMSprop(lr=learning_rate),
-        loss=losses.mean_squared_error,
-        loss_weights=loss_weights)
-    return hourglass
-
-
-def transfer_learn_counts(hourglass,
-                          num_hg_modules,
-                          num_conv_channels,
-                          transpose_output,
-                          min_hg_shape,
-                          max_hg_shape,
-                          resampling_size,
-                          learning_rate):
-
-    res_block_n = get_n_resamplings(max_hg_shape,
-                                    min_hg_shape,
-                                    resampling_size)
-    res_block_n = res_block_n * 2 + 1
-    layer_name = 'hg_{:d}_res_block_{:d}_add'.format(num_hg_modules - 1,
-                                                     res_block_n)
-    prev = hourglass.get_layer(name=layer_name).output
-
-    outputs = []
-
-    hm_count_output = feature_count_output(
-        prev,
-        num_convs=2,
-        num_channels=num_conv_channels,
-        num_dense_units=8,
-        final_activation=None,
-        name='hm_c')
-    outputs.append(hm_count_output)
-    if transpose_output:
-        seg_count_output = feature_count_output(
-            prev,
-            num_convs=2,
-            num_channels=num_conv_channels,
-            num_dense_units=8,
-            final_activation=None,
-            name='seg_c')
-        outputs.append(seg_count_output)
-
-        mask_output = feature_count_output(
-            prev,
+    if blur_output:
+        blur_name = 'blur'
+        blur_output = feature_count_output(
+            prev=prev,
             num_convs=2,
             num_channels=num_conv_channels,
             num_dense_units=8,
             final_activation='sigmoid',
-            name='blur')
-        outputs.append(mask_output)
+            name=blur_name)
+        outputs.append(blur_output)
+        output_names.append(blur_name)
 
-        loss = [losses.mean_squared_error,
-                losses.mean_squared_error,
-                losses.binary_crossentropy]
-    else:
-        loss = losses.mean_squared_error
+    hourglass = models.Model(inputs=input_layer, outputs=outputs)
+    return hourglass, output_names
 
-    hourglass_t = models.Model(inputs=hourglass.input, outputs=outputs)
 
-    for layer in hourglass_t.layers:
-        if layer in hourglass.layers:
-            layer.trainable = False
+def get_loss_weights(output_names,
+                     num_hg_modules,
+                     transpose_output,
+                     blur_output):
+    loss_weights = np.cumsum(np.ones(num_hg_modules))
+    if transpose_output:
+        loss_weights = np.repeat(loss_weights, 2)
+    if blur_output:
+        loss_weights = np.append(loss_weights, 1)
+    loss_weights /= loss_weights.sum()
+    loss_weights = {layer: w for layer, w in zip(output_names, loss_weights)}
+    return loss_weights
 
-    hourglass_t.compile(
+
+def compile_hourglass(hourglass,
+                      output_names,
+                      num_hg_modules,
+                      transpose_output,
+                      blur_output,
+                      learning_rate):
+    loss_weights = get_loss_weights(
+        output_names,
+        num_hg_modules,
+        transpose_output,
+        blur_output)
+    hourglass.compile(
         optimizer=optimizers.RMSprop(lr=learning_rate),
-        loss=loss,
-    )
-
-    return hourglass_t
+        loss=losses.mean_squared_error,
+        loss_weights=loss_weights)
 
 
-def combine_models(original, transferred, learning_rate):
-    assert original.input == transferred.input
-    combined = models.Model(
-        inputs=original.input,
-        outputs=original.outputs + transferred.outputs
-    )
+def get_available_gpus():
+    local_devices = device_lib.list_local_devices()
+    gpus = [x.name for x in local_devices if x.device_type == 'GPU']
+    return gpus
 
-    for layer in combined.layers:
-        layer.trainable = True
 
-    combined.compile(
-        optimizer=optimizers.RMSprop(lr=learning_rate),
-        loss=losses.mean_squared_error
-    )
+def count_available_gpus():
+    available_gpus = get_available_gpus()
+    return len(available_gpus)
 
-    return combined
+
+def create_multi_gpu_model(model, gpus):
+    if gpus == 1:
+        warnings.warn('Only one GPU available, assuming that model is already '
+                      'built on GPU')
+        model_gpu = model
+    elif gpus > 1:
+        model_gpu = utils.multi_gpu_model(model, gpus)
+    elif gpus == 0:
+        warnings.warn('Zero GPUs selected or available, '
+                      'returning CPU model', RuntimeWarning)
+        model_gpu = model
+    return model_gpu
 
 
 def load_model(model_json_fn, model_weights_fn):

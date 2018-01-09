@@ -328,73 +328,43 @@ def generate_training_data(directory,
         segment)
 
 
+def transformed_fill_mask(img_batch):
+    if img_batch.ndim == 5:
+        transformed_fill_mask_batch = img_batch[:, 1, ...].any(axis=3)
+    else:
+        transformed_fill_mask_batch = img_batch.any(axis=3)
+    return transformed_fill_mask_batch
+
+
+def batch_sum(batch):
+    batch = np.asarray(batch)
+    flat_batch = batch.reshape(batch.shape[0], -1)
+    return flat_batch.sum(1)
+
+
+def estimate_in_focus(in_focus_batch, transformed_fill_mask_batch):
+    in_focus_count = batch_sum(in_focus_batch)
+    img_sizes = batch_sum(transformed_fill_mask_batch)
+    return in_focus_count / img_sizes
+
+
 def batch_formatting_wrapper(generator,
                              n_outputs,
                              heatmap_shape=(64, 64),
                              segment=True,
-                             segment_shape=(128, 128)):
-    for X_batch, y_hm_batch, y_segs_batch, _ in generator:
+                             segment_shape=(128, 128),
+                             in_focus=True):
+    for X_batch, y_hm_batch, y_segs_batch, in_focus_mask_batch in generator:
         y_hm_batch = resize_y_batch(y_hm_batch, heatmap_shape)
         if segment:
             y_segs_batch = resize_y_batch(y_segs_batch, segment_shape)
             y_batch = [y_hm_batch, y_segs_batch] * n_outputs
         else:
             y_batch = [y_hm_batch, ] * n_outputs
-        yield X_batch, y_batch
-
-
-def count_segments(segs, mask):
-    segs = 1 - segs
-    segs[mask] = 0
-    labelled = label(segs, connectivity=2)
-    small_mask = remove_small_objects(
-        labelled, 100, connectivity=2).astype(bool)
-    border_mask = clear_border(segs, buffer_size=1).astype(bool)
-    labelled[~small_mask & ~border_mask] = 0
-    labelled, *_ = relabel_sequential(labelled)
-    return labelled.max()
-
-
-def count_heatmap_peaks(hmap, mask, threshold=0.8):
-    hmap = gaussian(hmap, sigma=5, preserve_range=True)
-    hmap[mask] = 0
-    peaks = peak_local_max(hmap,
-                           exclude_border=False,
-                           min_distance=5,
-                           threshold_abs=threshold)
-    return len(peaks)
-
-
-def cell_counting_wrapper(generator):
-    for X_batch, y_hm_batch, y_segs_batch, y_mask_batch in generator:
-        hm_count_batch = []
-        if y_segs_batch is None:
-            y_segs_batch = repeat(None)
-            y_mask_batch = repeat(None)
-        else:
-            seg_count_batch = []
-            in_focus_batch = []
-        for img, hm, segs, in_focus_mask in zip(X_batch, y_hm_batch,
-                                                y_segs_batch, y_mask_batch):
-            if img.ndim == 4:
-                transformed_fill_mask = ~img[1].any(axis=2)
-            else:
-                transformed_fill_mask = ~img.any(axis=2)
-            hm_count_batch.append(
-                count_heatmap_peaks(hm.reshape(hm.shape[:-1]),
-                                    transformed_fill_mask))
-            if segs is not None:
-                seg_count_batch.append(
-                    count_segments(segs.reshape(segs.shape[:-1]),
-                                   transformed_fill_mask))
-                in_focus_batch.append(
-                    in_focus_mask[~transformed_fill_mask].sum() /
-                    in_focus_mask[~transformed_fill_mask].size
-                )
-        if y_segs_batch is not None:
-            y_batch = [np.asarray(hm_count_batch),
-                       np.asarray(seg_count_batch),
-                       np.asarray(in_focus_batch)]
-        else:
-            y_batch = [np.asarray(hm_count_batch)]
+        if in_focus:
+            transformed_fill_mask_batch = transformed_fill_mask(X_batch)
+            in_focus_score_batch = estimate_in_focus(
+                in_focus_mask_batch,
+                transformed_fill_mask_batch)
+            y_batch += [in_focus_score_batch, ]
         yield X_batch, y_batch

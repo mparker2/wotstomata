@@ -1,0 +1,31 @@
+#!/bin/bash
+
+YAML=$1
+if [ -z "$YAML" ];
+then
+  YAML="./train.yaml"
+fi
+
+if [ ! -f $YAML ];
+then
+  echo "File $YAML not found"
+  exit 1
+fi
+
+NUM_GPUS=`yq r $YAML scheduler_parameters.num_gpus`
+CPU_MEMORY=`yq r $YAML scheduler_parameters.cpu_memory`
+EMAIL_ON=`yq r $YAML scheduler_parameters.email_on`
+EMAIL=`yq r $YAML scheduler_parameters.email_address`
+JOB_NAME=`yq r $YAML scheduler_parameters.job_name`
+CONDA_ENV=`yq r $YAML scheduler_parameters.conda_env`
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+qsub -l gpu=$NUM_GPUS \
+     -l rmem=$CPU_MEMORY \
+     -v YAML=$YAML \
+     -v NUM_GPUS=$NUM_GPUS \
+     -v CONDA_ENV=$CONDA_ENV \
+     -m $EMAIL_ON \
+     -M $EMAIL \
+     -N $JOB_NAME \
+     "${DIR}/train_stomatal_prediction.sh"

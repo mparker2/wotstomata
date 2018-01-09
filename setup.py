@@ -8,7 +8,8 @@ setup(
     ),
     author='Matthew Parker',
     scripts=[
-        'wotstomata/scripts/train_stomatal_prediction'
+        'wotstomata/scripts/ws_schedule_training',
+        'wotstomata/scripts/train_stomatal_prediction.sh',
     ],
     entry_points={
         'console_scripts': [

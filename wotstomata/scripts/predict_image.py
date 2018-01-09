@@ -8,11 +8,16 @@ from skimage.transform import resize
 
 import click
 import h5py
+from h5py.version import hdf5_version_tuple
 
-from hourglass import load_model
-from raster_to_shapes import (write_geoms_as_rois,
-                              edgemap_segments_to_polygons,
-                              heatmap_peaks_to_points)
+from ..train.hourglass import load_model
+from ..predict.raster_to_shapes import (write_geoms_as_rois,
+                                        edgemap_segments_to_polygons,
+                                        heatmap_peaks_to_points)
+
+# /fastdata does not support file locking
+if hdf5_version_tuple[0] >= 1 and hdf5_version_tuple[1] >= 10:
+    os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
 
 
 def read_multipage_tiff(path):
@@ -89,13 +94,13 @@ def _predict_img(zstack, model, step_size=128):
 @click.option('--output', required=False, default=None,
               help='otuput file basename')
 @click.option('--step-size', default=128)
-@click.option('--include-inverted', default=True)
-@click.option('--generate-rois', default=True)
+@click.option('--include-inverted/--no-inverted', default=True)
+@click.option('--generate-rois/--no-rois', default=True)
 @click.option('--roi-lines/--roi-polys', default=False)
 @click.option('--points-3d/--points-flattened', default=False)
-def predict_img(img, arch, weights, output,
-                step_size, include_inverted,
-                generate_rois, roi_lines, points_3d):
+def predict_image(img, arch, weights, output,
+                  step_size, include_inverted,
+                  generate_rois, roi_lines, points_3d):
     model = load_model(arch, weights)
     if os.path.isdir(img):
         glob_path = img.rstrip('/') + '/*.tif'
@@ -106,7 +111,7 @@ def predict_img(img, arch, weights, output,
         outputs = [output, ]
     for img_fn, output in zip(imgs, outputs):
         img = read_multipage_tiff(img_fn)
-        heatmap, segments, density, all_cells, blur = _predict_img(
+        heatmap, segments, blur = _predict_img(
             img, model, step_size)
         h5_file = h5py.File(output, mode='w')
         h5_file.create_dataset('heatmap', data=heatmap)
@@ -138,4 +143,4 @@ def predict_img(img, arch, weights, output,
             write_geoms_as_rois(points, output + '.stomatapoints.roi')
 
 if __name__ == '__main__':
-    predict_img()
+    predict_image()

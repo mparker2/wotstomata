@@ -10,18 +10,15 @@ model_architechture:
     heatmap_output_shape: !!python/tuple [64, 64]
     segment_output_shape: !!python/tuple [128, 128]
 
-cell_counting_transfer:
-    generate_feature_counts: false
-    load_model_for_transfer: false
-
 model_training:
     learning_rate: 2.5e-4
     minibatch_size: 32
     steps_per_epoch: 128
     validation_steps: 12
     num_epochs: 75
-    num_transfer_epochs: 50
     frac_randomly_sampled_imgs: 0.4
+    num_gpus: 2
+    cpu_memory: '32G'
     verbose: 1
 
 training_data:
@@ -29,13 +26,9 @@ training_data:
     val_data_dir: './data/imgs/val'
 
 outputs:
-    plot_fn: "./data/models/loss.png"
-    architecture_fn: "./data/models/model_architecture.json"
-    summary_fn: "./data/models/model_summary.txt"
-    checkpoint_fn: "./data/models/model_checkpoint_weights.h5"
-    weights_fn: "./data/models/model_final_weights.h5"
-    history_fn: "./data/models/model_history.pk"
-    transfer_checkpoint_fn: './data/models/count_model_checkpoint_weights.h5'
-    transfer_history_fn: "./data/models/count_model_history.pk"
-    combined_architecture_fn: './data/models/segmentation_count_model_architecture.json'
-    combined_weights_fn: './data/models/segmentation_count_model_final_weights.h5'
+    plot_fn: "./data/models/loss_{date}.png"
+    architecture_fn: "./data/models/model_architecture_{date}.json"
+    summary_fn: "./data/models/model_summary_{date}.txt"
+    checkpoint_fn: "./data/models/model_checkpoint_weights_{date}.h5"
+    weights_fn: "./data/models/model_final_weights_{date}.h5"
+    history_fn: "./data/models/model_history_{date}.pk"

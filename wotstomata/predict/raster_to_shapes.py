@@ -15,7 +15,7 @@ from skimage.future.graph import RAG
 from rasterio.features import shapes as polygonize
 from shapely.geometry import shape as as_shape, MultiPoint, LineString
 
-from roi import ROIEncoder, ROI_TYPES
+from .roi import ROIEncoder, ROI_TYPES
 
 
 def active_contour_segmentation(img):
